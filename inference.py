@@ -38,10 +38,12 @@ SYSTEM_PROMPT = textwrap.dedent("""\
     You are a database migration expert. You receive a SQLite database schema with failing SQL queries.
     Your goal is to issue SQL DDL/DML statements one at a time to fix the schema so all target queries pass.
     Rules:
-    - Output ONLY a single valid SQL statement per turn. No explanation, no markdown, no backticks.
+    - CRITICAL: You MUST output exactly ONE single SQL statement per turn. Do not combine multiple statements (like CREATE and INSERT together). If you need to execute 3 statements, it will take 3 separate turns.
+    - No explanation, no markdown, no backticks.
     - Read the schema_dump and query_results carefully before acting.
     - If a query fails with an error, fix the root cause.
-    - Prefer ALTER TABLE over DROP+RECREATE when possible.
+    - SQLite ALTER TABLE is limited. Do NOT try to add UNIQUE, PRIMARY KEY, or STORED constraints directly via ALTER TABLE ADD COLUMN.
+    - For structural changes that SQLite ALTER TABLE does not support, you MUST create a new table, copy data over, drop the old table, and rename the new table.
     - Always preserve existing data.
     - When all queries pass, output: SUBMIT
 """)
@@ -127,6 +129,12 @@ def get_model_action(client: OpenAI, observation, history: List[str]) -> str:
             lines = [l for l in lines if not l.strip().startswith("```")]
             text = "\n".join(lines).strip()
 
+        # Enforce single statement to prevent multi-statement errors
+        if text.strip().upper() != "SUBMIT":
+            statements = [s for s in text.split(";") if s.strip()]
+            if statements:
+                text = statements[0].strip() + ";"
+
         return text if text else "SELECT 1;"
     except Exception as exc:
         print(f"[DEBUG] Model request failed: {exc}", flush=True)
@@ -189,7 +197,7 @@ async def run_episode(
 async def main() -> None:
     client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
-    env = await SchemaMigrationEnv.from_docker_image(IMAGE_NAME)
+    env = await SchemaMigrationEnv.from_docker_image(IMAGE_NAME, port=8007)
 
     try:
         for task_id in ALL_TASKS:
