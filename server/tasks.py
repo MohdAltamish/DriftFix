@@ -13,7 +13,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
-from server.models import QueryResult
+from models import QueryResult
 
 
 @dataclass
