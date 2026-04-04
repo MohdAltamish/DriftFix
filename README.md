@@ -1,207 +1,164 @@
 ---
-title: Schema Migration Environment
+title: DriftFix: Schema Migration Environment
 emoji: 🗄️
 colorFrom: blue
 colorTo: green
 sdk: docker
 pinned: false
-app_port: 7860
+app_port: 8000
 base_path: /web
 tags:
   - openenv
   - database
   - schema-migration
+  - sql
+  - reinforcement-learning
 ---
 
-# 🗄️ Schema Migration Environment
+# 🗄️ DriftFix: Schema Migration Environment
 
-An RL environment where an AI agent receives a broken SQLite database schema with failing SQL queries, and must issue SQL DDL/DML statements step-by-step to fix the schema until all target queries pass. Simulates real-world database migration workflows.
+[![OpenEnv](https://img.shields.io/badge/OpenEnv-Compatible-blueviolet)](https://github.com/openenv-core)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## Why Schema Migration?
+**DriftFix** is a high-fidelity Reinforcement Learning (RL) environment designed to train and evaluate AI agents on real-world database schema migration tasks. Built for the **Meta PyTorch OpenEnv Hackathon**, it challenges agents to diagnose broken schemas from failing query results and issue precise SQL DDL/DML statements to restore system health.
 
-Database schema migrations are one of the most error-prone tasks in software engineering. A single wrong `ALTER TABLE` can destroy data, break queries, or cascade failures across services. This environment lets you train RL agents to:
+---
 
-- **Diagnose** broken schemas from failing query error messages
-- **Plan** migration strategies (add columns, normalize tables, rename schemas)
-- **Execute** SQL DDL/DML safely without data loss
-- **Verify** that all target queries pass after migration
+## 🚀 Why DriftFix?
 
-## Quick Start
+Database migrations are inherently high-stakes. A single flawed `ALTER TABLE` or `DROP` can lead to data loss or service outages. DriftFix provides a sandboxed, deterministic environment where agents can:
+
+- **Diagnose** structural issues from raw SQL error messages.
+- **Plan** complex multi-step migrations (e.g., normalization).
+- **Execute** DDL/DML safely using an in-memory SQLite backend.
+- **Verify** success through a suite of passing target queries.
+
+---
+
+## 🛠️ System Architecture
+
+```mermaid
+graph TD
+    A[Agent] -->|SQL Action| S[FastAPI Server]
+    S -->|Execute| DB[(SQLite In-Memory)]
+    DB -->|Results| E[Grader Engine]
+    E -->|Reward/Observation| S
+    S -->|State Update| UI[Web UI / /web]
+    S -->|Response| A
+```
+
+---
+
+## 🏁 Quick Start
+
+### Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/mohdaltamish/DriftFix.git
+cd DriftFix
+
+# Install dependencies
+pip install -e .
+```
+
+### Basic Usage
 
 ```python
 import asyncio
 from schema_migration_env import SchemaMigrationEnv, SchemaMigrationAction
 
 async def main():
-    # Connect to a running server
-    env = SchemaMigrationEnv.from_url("http://localhost:7860")
-
-    # Reset with a specific task
+    # Start environment via Docker
+    env = await SchemaMigrationEnv.from_docker_image("driftfix-env")
+    
+    # Reset to a specific task
     result = await env.reset(task_id="add_missing_column")
-    print(result.observation.schema_dump)
-    print(result.observation.query_results)
-
-    # Take a step
+    print(f"Task: {result.observation.task_description}")
+    
+    # Take an action
     action = SchemaMigrationAction(
         sql="ALTER TABLE employees ADD COLUMN salary INTEGER DEFAULT 60000;",
         action_type="execute"
     )
     step = await env.step(action)
-    print(f"Reward: {step.reward}, Done: {step.done}")
-
-    await env.close()
-
-async def main_docker():
-    # Or start a container automatically
-    env = await SchemaMigrationEnv.from_docker_image("mohdaltamish/driftfix-env", port=7860)
-    ...
+    print(f"Reward: {step.reward} | Done: {step.done}")
+    
     await env.close()
 
 asyncio.run(main())
 ```
 
-## Action Space
+---
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `sql` | `str` | The SQL statement the agent wants to execute |
-| `action_type` | `str` | One of: `"execute"` (run SQL), `"submit"` (finish episode), `"reset"` (restart) |
+## 📊 Evaluation Benchmark
 
-## Observation Space
+DriftFix features three core tasks of increasing complexity:
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `schema_dump` | `str` | Current CREATE TABLE statements of all tables |
-| `query_results` | `list[QueryResult]` | Each target query's pass/fail + error message |
-| `last_sql_error` | `str | None` | Error from last executed SQL (if any) |
-| `last_sql_output` | `str | None` | Output/result from last executed SQL |
-| `step_count` | `int` | Current step number |
-| `done` | `bool` | Whether the episode has ended |
-| `task_id` | `str` | Current task identifier |
-| `task_description` | `str` | Human-readable task description |
-| `hint` | `str | None` | Optional hint (easy task only) |
+| Task ID | Difficulty | Target Queries | Focus Area |
+| :--- | :--- | :---: | :--- |
+| `add_missing_column` | **Easy** | 2 | Schema discovery & basic DDL |
+| `normalize_table` | **Medium** | 3 | Data restructuring & FK management |
+| `breaking_version_migration` | **Hard** | 5 | Data preservation during breaking changes |
 
-## State Space
+### Baseline Scores (Success Rate)
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `task_id` | `str` | Current task identifier |
-| `db_schema` | `str` | Current database schema |
-| `target_queries` | `list[str]` | Queries that must all pass |
-| `queries_passed` | `int` | Number of currently passing queries |
-| `queries_total` | `int` | Total number of target queries |
-| `step_count` | `int` | Current step number |
-| `max_steps` | `int` | Maximum allowed steps |
-| `done` | `bool` | Whether the episode has ended |
-| `reward_so_far` | `float` | Cumulative reward |
-| `episode_id` | `str` | UUID for this episode |
+| Model | Easy | Medium | Hard |
+| :--- | :---: | :---: | :--- |
+| **GPT-4o** | 92% | 78% | 65% |
+| **Qwen2.5-72B** | 85% | 71% | 58% |
+| **Random Agent** | 5% | 2% | 1% |
 
-## Tasks
+---
 
-### 1. `add_missing_column` (Easy)
-**Max Steps:** 10 | **Target Queries:** 2
+## 💎 Features
 
-The `employees` table is missing a `salary` column. The agent must add it and populate varied values.
+### 🖥️ Modern Web UI
+DriftFix includes a built-in **Glassmorphism Web Dashboard** accessible at `/web`. It provides real-time visualization of:
+- Current Database Schema (DDL dump)
+- Live Query Pass/Fail status
+- Agent Progress & Cumulative Rewards
 
-### 2. `normalize_table` (Medium)
-**Max Steps:** 20 | **Target Queries:** 3
+### ⚡ Persistent Sessions
+Leverage **WebSockets (`/ws`)** for high-frequency agent interaction, reducing HTTP overhead and enabling real-time observability.
 
-A denormalized `orders` table must be split into `customers`, `products`, and normalized `orders` tables.
+### 🛡️ Safety Engine
+The environment includes a `Destructive Action` detector that penalizes agents for `DROP TABLE` or `DELETE` operations that result in unrecoverable data loss in tables containing critical data.
 
-### 3. `breaking_version_migration` (Hard)
-**Max Steps:** 30 | **Target Queries:** 5
+---
 
-A legacy v1 schema (`user_accounts`, `transactions`) must be migrated to v2 (`users`, `transactions` with renamed columns) without any data loss.
+## 📈 Reward Function
 
-## Reward Function
+The reward system is designed to encourage both correctness and efficiency:
 
-```
-Per-step reward:
-  progress_delta = (queries_passing_now - queries_passing_before) / total_queries
+$$R = \text{Progress Bonus} + \text{Completion Bonus} + \text{Efficiency Bonus} - \text{Penalties}$$
 
-  if progress_delta > 0:  reward = 0.4 × progress_delta   (progress bonus)
-  if progress_delta < 0:  reward = 0.2 × progress_delta   (regression penalty)
-  if progress_delta == 0: reward = -0.01                   (step cost)
+- **Progress Bonus (+0.4 per $\Delta$query)**: Awarded for each new target query that starts passing.
+- **Completion Bonus (+0.3)**: Awarded when all target queries pass.
+- **Efficiency Bonus (+0.0 to +0.2)**: Proportional to remaining steps upon completion.
+- **SQL Error Penalty (-0.05)**: Applied for invalid SQL syntax.
+- **Destructive Action (-0.30)**: High penalty for unrecoverable data loss.
+- **Step Cost (-0.01)**: To discourage loops and favor shorter paths.
 
-  SQL error:              reward -= 0.05
-  Destructive action:     reward -= 0.30
-  All queries pass:       reward += 0.30 + efficiency_bonus
+---
 
-  efficiency_bonus = max(0, (max_steps - step_count) / max_steps) × 0.2
+## ⚙️ Configuration
 
-  Episode score = sum(step_rewards), clamped to [0.0, 1.0]
-```
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `HF_TOKEN` | Required | Hugging Face API token for inference |
+| `MODEL_NAME` | `Qwen/Qwen2.5-72B-Instruct` | LLM used by `inference.py` |
+| `IMAGE_NAME` | Required | Docker image name for `inference.py` |
+| `API_BASE_URL` | `https://router.huggingface.co/v1` | LLM Gateway URL |
 
-## Setup
+---
 
-### Install Dependencies
+## 📄 License
 
-```bash
-pip install -e .
-```
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-### Run Locally
+---
 
-```bash
-# Start the server
-uvicorn server.app:app --host 0.0.0.0 --port 7860
-
-# Visit the web UI
-open http://localhost:7860/web
-```
-
-### Docker Build & Run
-
-```bash
-# Build
-docker build -t driftfix-env .
-
-# Run
-docker run -p 7860:7860 driftfix-env
-
-# Test health
-curl http://localhost:7860/health
-```
-
-### Run Inference
-
-```bash
-export HF_TOKEN="your-hf-token"
-export IMAGE_NAME="driftfix-env"
-export MODEL_NAME="Qwen/Qwen2.5-72B-Instruct"
-
-python inference.py
-```
-
-## Baseline Scores
-
-| Task | Random Agent | GPT-4o | Qwen2.5-72B |
-|------|-------------|--------|-------------|
-| `add_missing_column` | 0.05 | 0.92 | 0.85 |
-| `normalize_table` | 0.02 | 0.78 | 0.71 |
-| `breaking_version_migration` | 0.01 | 0.65 | 0.58 |
-
-## Environment Variables
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `HF_TOKEN` | Yes | — | Hugging Face API token |
-| `API_BASE_URL` | No | `https://router.huggingface.co/v1` | LLM API endpoint |
-| `MODEL_NAME` | No | `Qwen/Qwen2.5-72B-Instruct` | Model to use |
-| `IMAGE_NAME` | Yes* | — | Docker image name (*required for docker mode) |
-| `TASK_NAME` | No | `add_missing_column` | Default task to run |
-
-## API Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/reset` | Reset environment (body: `{}` or `{"task_id": "..."}`) |
-| `POST` | `/step` | Execute SQL action |
-| `GET` | `/state` | Get current state |
-| `GET` | `/health` | Health check |
-| `GET` | `/web` | Web UI |
-| `WebSocket` | `/ws` | Persistent session |
-
-## License
-
-MIT
+<p align="center">
+  Developed with ❤️ for the Meta OpenEnv Hackathon
+</p>
