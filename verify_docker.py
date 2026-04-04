@@ -8,17 +8,19 @@ async def main():
     
     # Initialize the environment with the image name
     # This will trigger the container start
-    env = await SchemaMigrationEnv.from_docker_image(image_name=image_name, port=8001)
+    env = await SchemaMigrationEnv.from_docker_image(image_name=image_name, port=8008)
     
     try:
         print("Starting environment...")
-        reset_result = await env.reset(task_id="add_email_column")
-        print(f"Reset successful. Observation: {reset_result.observation.message}")
+        reset_result = await env.reset(task_id="add_missing_column")
+        print(f"Reset successful. Task: {reset_result.observation.task_description}")
         
+        from schema_migration_env import SchemaMigrationAction
         print("Sending step: SELECT 1")
-        step_result = await env.step({"sql": "SELECT 1"})
+        action = SchemaMigrationAction(sql="SELECT 1;", action_type="execute")
+        step_result = await env.step(action)
         print(f"Step successful. Reward: {step_result.reward}")
-        print(f"Observation: {step_result.observation.message}")
+        print(f"Done status: {step_result.done}")
         
     except Exception as e:
         print(f"Error: {e}")
