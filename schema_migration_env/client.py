@@ -49,7 +49,7 @@ class SchemaMigrationEnv:
                 "-d",
                 "--rm",
                 "-p",
-                f"{port}:8000",
+                f"{port}:7860",
                 image_name,
             ],
             capture_output=True,

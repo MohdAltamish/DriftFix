@@ -62,6 +62,22 @@ cd DriftFix
 pip install -e .
 ```
 
+### Local Testing & Evaluation
+
+Testing the evaluation sandbox locally requires building the Docker image and utilizing the Hugging Face Serverless API:
+
+```bash
+# 1. Build the OpenEnv compatible Docker image
+docker build -t driftfix-env .
+
+# 2. Set your Hugging Face Access Token
+export HF_TOKEN="your_hf_api_key_here"
+export IMAGE_NAME="driftfix-env"
+
+# 3. Simulate the evaluation pipeline
+python3 inference.py
+```
+
 ### Basic Usage
 
 ```python
@@ -106,7 +122,7 @@ DriftFix features three core tasks of increasing complexity:
 | Model | Easy | Medium | Hard |
 | :--- | :---: | :---: | :--- |
 | **GPT-4o** | 92% | 78% | 65% |
-| **Qwen2.5-72B** | 85% | 71% | 58% |
+| **Qwen2.5-72B-Instruct** | 100% (Score: 0.88) | 100% (Score: 0.85) | 0% (Score: 0.0) |
 | **Random Agent** | 5% | 2% | 1% |
 
 ---

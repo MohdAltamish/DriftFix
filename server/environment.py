@@ -10,7 +10,7 @@ import sqlite3
 import uuid
 from typing import List, Optional, Tuple
 
-from models import (
+from server.models import (
     QueryResult,
     ResetResult,
     SchemaMigrationAction,
@@ -18,7 +18,7 @@ from models import (
     SchemaMigrationState,
     StepResult,
 )
-from tasks import TaskDefinition, get_task, list_task_ids
+from server.tasks import TaskDefinition, get_task, list_task_ids
 
 
 class SchemaMigrationEnvironment:
