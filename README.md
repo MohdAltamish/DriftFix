@@ -1,5 +1,5 @@
 ---
-title: DriftFix: Schema Migration Environment
+title: "DriftFix: Schema Migration Environment"
 emoji: 🗄️
 colorFrom: blue
 colorTo: green
