@@ -30,7 +30,7 @@ class SchemaMigrationEnv:
     def __init__(self, base_url: str, session_id: Optional[str] = None) -> None:
         self.base_url = base_url.rstrip("/")
         self.session_id = session_id
-        self._client = httpx.AsyncClient(base_url=self.base_url, timeout=30.0)
+        self._client = httpx.AsyncClient(base_url=self.base_url, timeout=120.0)
         self._container_id: Optional[str] = None
 
     @classmethod

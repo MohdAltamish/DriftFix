@@ -6,7 +6,7 @@ MANDATORY
     API_BASE_URL      The API endpoint for the LLM.
     MODEL_NAME        The model identifier to use for inference.
     HF_TOKEN          Your Hugging Face / API key.
-    LOCAL_IMAGE_NAME  The name of the local image to use for the environment (optional).
+    IMAGE_NAME        The name of the Docker image to use for the environment.
 
 STDOUT FORMAT
 - The script must emit exactly three line types to stdout, in this order:
@@ -18,7 +18,9 @@ STDOUT FORMAT
 
 import asyncio
 import os
+import sys
 import textwrap
+import traceback
 from typing import List, Optional
 
 from openai import OpenAI
@@ -26,12 +28,13 @@ from openai import OpenAI
 from schema_migration_env import SchemaMigrationEnv, SchemaMigrationAction
 
 # ── Environment variables ────────────────────────────────────────────────────
-LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
-HF_TOKEN         = os.getenv("HF_TOKEN")
-API_BASE_URL     = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
-MODEL_NAME       = os.getenv("MODEL_NAME")   or "Qwen/Qwen2.5-72B-Instruct"
+# The judge injects IMAGE_NAME for the Docker image to spin up
+IMAGE_NAME   = os.getenv("IMAGE_NAME") or os.getenv("LOCAL_IMAGE_NAME")
+HF_TOKEN     = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
+MODEL_NAME   = os.getenv("MODEL_NAME")   or "Qwen/Qwen2.5-72B-Instruct"
 
-# Default to local environment (expected port 7860) for judge runners
+# Fallback URL when not using Docker: judge may also provide ENV_URL / HF_SPACE_URL
 ENV_URL = os.getenv("ENV_URL") or os.getenv("HF_SPACE_URL") or "http://localhost:7860"
 
 BENCHMARK              = "schema_migration_env"
@@ -181,39 +184,74 @@ async def run_episode(env: SchemaMigrationEnv, client: OpenAI, task_id: str) -> 
 
     except Exception as e:
         print(f"[DEBUG] Episode error for task {task_id}: {e}", flush=True)
+        traceback.print_exc(file=sys.stderr)
 
     finally:
         log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
 
 
+# ── Environment health check ────────────────────────────────────────────────
+async def wait_for_health(env: SchemaMigrationEnv, timeout: int = 60) -> bool:
+    """Poll the /health endpoint until it returns 200 or timeout."""
+    import time
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            resp = await env._client.get("/health")
+            if resp.status_code == 200:
+                print("[DEBUG] Environment is healthy", flush=True)
+                return True
+        except Exception:
+            pass
+        await asyncio.sleep(1)
+    return False
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 async def main() -> None:
-    # Connect to environment:
-    # - If LOCAL_IMAGE_NAME is set → start local Docker container
-    # - Otherwise → connect to ENV_URL (prioritizes localhost:7860)
     env = None
-    try:
-        # Move client initialization inside guarded block
-        client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+    client = None
 
-        if LOCAL_IMAGE_NAME:
-            print(f"[DEBUG] Starting Docker container: {LOCAL_IMAGE_NAME}", flush=True)
-            env = await SchemaMigrationEnv.from_docker_image(LOCAL_IMAGE_NAME, port=8007)
+    try:
+        # Initialize LLM client
+        print(f"[DEBUG] API_BASE_URL={API_BASE_URL}", flush=True)
+        print(f"[DEBUG] MODEL_NAME={MODEL_NAME}", flush=True)
+        print(f"[DEBUG] IMAGE_NAME={IMAGE_NAME}", flush=True)
+        print(f"[DEBUG] ENV_URL={ENV_URL}", flush=True)
+        print(f"[DEBUG] HF_TOKEN={'set' if HF_TOKEN else 'not set'}", flush=True)
+
+        client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN or "dummy")
+
+        # Connect to environment:
+        # - If IMAGE_NAME is set → start local Docker container
+        # - Otherwise → connect to ENV_URL
+        if IMAGE_NAME:
+            print(f"[DEBUG] Starting Docker container: {IMAGE_NAME}", flush=True)
+            env = await SchemaMigrationEnv.from_docker_image(IMAGE_NAME, port=8007)
         else:
-            print(f"[DEBUG] Connecting to environment: {ENV_URL}", flush=True)
+            print(f"[DEBUG] Connecting to environment at: {ENV_URL}", flush=True)
             env = SchemaMigrationEnv.from_url(ENV_URL)
+            # Wait for the environment to be healthy before proceeding
+            healthy = await wait_for_health(env, timeout=60)
+            if not healthy:
+                print("[DEBUG] WARNING: Environment health check timed out, proceeding anyway", flush=True)
 
     except Exception as e:
         print(f"[DEBUG] Failed to initialize inference: {e}", flush=True)
+        traceback.print_exc(file=sys.stderr)
         # Emit mandatory [START]/[END] for all tasks so validator sees output
         for task_id in ALL_TASKS:
             log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
             log_end(success=False, steps=0, score=0.0, rewards=[])
         return
 
+    # Run all episodes
     try:
         for task_id in ALL_TASKS:
             await run_episode(env, client, task_id)
+    except Exception as e:
+        print(f"[DEBUG] Unexpected error during episodes: {e}", flush=True)
+        traceback.print_exc(file=sys.stderr)
     finally:
         try:
             await env.close()
@@ -226,6 +264,7 @@ if __name__ == "__main__":
         asyncio.run(main())
     except BaseException as e:
         print(f"[DEBUG] Fatal error: {e}", flush=True)
+        traceback.print_exc(file=sys.stderr)
         # Last resort — emit END for any tasks that didn't complete
         for task_id in ALL_TASKS:
             log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
