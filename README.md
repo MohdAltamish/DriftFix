@@ -122,7 +122,7 @@ DriftFix features three core tasks of increasing complexity:
 | Model | Easy | Medium | Hard |
 | :--- | :---: | :---: | :--- |
 | **GPT-4o** | 92% | 78% | 65% |
-| **Qwen2.5-72B-Instruct** | 100% (Score: 0.88) | 100% (Score: 0.85) | 0% (Score: 0.0) |
+| **Qwen2.5-72B-Instruct** | 100% (Score: 0.880) | 100% (Score: 0.850) | 100% (Score: 0.767) |
 | **Random Agent** | 5% | 2% | 1% |
 
 ---
@@ -130,10 +130,24 @@ DriftFix features three core tasks of increasing complexity:
 ## 💎 Features
 
 ### 🖥️ Modern Web UI
+
 DriftFix includes a built-in **Glassmorphism Web Dashboard** accessible at `/web`. It provides real-time visualization of:
 - Current Database Schema (DDL dump)
 - Live Query Pass/Fail status
 - Agent Progress & Cumulative Rewards
+
+#### Dashboard Preview
+<p align="center">
+  <img src="Screenshot%202026-04-05%20at%203.48.06%E2%80%AFAM.png" width="800" alt="DriftFix Web Dashboard - Main Interface">
+  <br>
+  <em>Figure 1: The DriftFix Dashboard showing real-time schema monitoring and query validation.</em>
+</p>
+
+<p align="center">
+  <img src="Screenshot%202026-04-05%20at%203.55.00%E2%80%AFAM.png" width="800" alt="DriftFix Web Dashboard - Task Completion">
+  <br>
+  <em>Figure 2: Real-time progress tracking as the agent successfully migrates the database schema.</em>
+</p>
 
 ### ⚡ Persistent Sessions
 Leverage **WebSockets (`/ws`)** for high-frequency agent interaction, reducing HTTP overhead and enabling real-time observability.
