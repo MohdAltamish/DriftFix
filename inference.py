@@ -3,10 +3,10 @@ Inference Script — Schema Migration Environment
 ===================================
 MANDATORY
 - Before submitting, ensure the following variables are defined in your environment configuration:
-    API_BASE_URL   The API endpoint for the LLM.
-    MODEL_NAME     The model identifier to use for inference.
-    HF_TOKEN       Your Hugging Face / API key.
-    IMAGE_NAME     The name of the local image to use for the environment (optional).
+    API_BASE_URL      The API endpoint for the LLM.
+    MODEL_NAME        The model identifier to use for inference.
+    HF_TOKEN          Your Hugging Face / API key.
+    LOCAL_IMAGE_NAME  The name of the local image to use for the environment (optional).
 
 STDOUT FORMAT
 - The script must emit exactly three line types to stdout, in this order:
@@ -26,11 +26,13 @@ from openai import OpenAI
 from schema_migration_env import SchemaMigrationEnv, SchemaMigrationAction
 
 # ── Environment variables ────────────────────────────────────────────────────
-IMAGE_NAME    = os.getenv("IMAGE_NAME")          # optional — only used for local Docker mode
-API_KEY       = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
-API_BASE_URL  = os.getenv("API_BASE_URL")  or "https://router.huggingface.co/v1"
-MODEL_NAME    = os.getenv("MODEL_NAME")    or "Qwen/Qwen2.5-72B-Instruct"
-HF_SPACE_URL  = os.getenv("HF_SPACE_URL") or "https://mohdaltamish-driftfix-env.hf.space"
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
+HF_TOKEN         = os.getenv("HF_TOKEN")
+API_BASE_URL     = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
+MODEL_NAME       = os.getenv("MODEL_NAME")   or "Qwen/Qwen2.5-72B-Instruct"
+
+# Default to local environment (expected port 7860) for judge runners
+ENV_URL = os.getenv("ENV_URL") or os.getenv("HF_SPACE_URL") or "http://localhost:7860"
 
 BENCHMARK              = "schema_migration_env"
 MAX_STEPS              = 15
@@ -186,22 +188,23 @@ async def run_episode(env: SchemaMigrationEnv, client: OpenAI, task_id: str) -> 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 async def main() -> None:
-    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
-
     # Connect to environment:
-    # - If IMAGE_NAME is set → start local Docker container
-    # - Otherwise → connect directly to HF Space (judge environment)
+    # - If LOCAL_IMAGE_NAME is set → start local Docker container
+    # - Otherwise → connect to ENV_URL (prioritizes localhost:7860)
     env = None
     try:
-        if IMAGE_NAME:
-            print(f"[DEBUG] Starting Docker container: {IMAGE_NAME}", flush=True)
-            env = await SchemaMigrationEnv.from_docker_image(IMAGE_NAME, port=8007)
+        # Move client initialization inside guarded block
+        client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+
+        if LOCAL_IMAGE_NAME:
+            print(f"[DEBUG] Starting Docker container: {LOCAL_IMAGE_NAME}", flush=True)
+            env = await SchemaMigrationEnv.from_docker_image(LOCAL_IMAGE_NAME, port=8007)
         else:
-            print(f"[DEBUG] Connecting to HF Space: {HF_SPACE_URL}", flush=True)
-            env = SchemaMigrationEnv.from_url(HF_SPACE_URL)
+            print(f"[DEBUG] Connecting to environment: {ENV_URL}", flush=True)
+            env = SchemaMigrationEnv.from_url(ENV_URL)
 
     except Exception as e:
-        print(f"[DEBUG] Failed to connect to environment: {e}", flush=True)
+        print(f"[DEBUG] Failed to initialize inference: {e}", flush=True)
         # Emit mandatory [START]/[END] for all tasks so validator sees output
         for task_id in ALL_TASKS:
             log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
