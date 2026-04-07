@@ -221,7 +221,7 @@ async def main() -> None:
 if __name__ == "__main__":
     try:
         asyncio.run(main())
-    except Exception as e:
+    except BaseException as e:
         print(f"[DEBUG] Fatal error: {e}", flush=True)
         # Last resort — emit END for any tasks that didn't complete
         for task_id in ALL_TASKS:

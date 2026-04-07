@@ -9,7 +9,7 @@ tags:
   - sql
   - real-world
 sdk: docker
-app_port: 8000
+app_port: 7860
 base_path: /web
 tasks:
   - id: add_missing_column

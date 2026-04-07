@@ -42,24 +42,23 @@ class SchemaMigrationEnv:
             raise ValueError("IMAGE_NAME environment variable is required")
 
         # Start container
-        result = subprocess.run(
-            [
-                "docker",
-                "run",
-                "-d",
-                "--rm",
-                "-p",
-                f"{port}:7860",
-                image_name,
-            ],
-            capture_output=True,
-            text=True,
+        process = await asyncio.create_subprocess_exec(
+            "docker",
+            "run",
+            "-d",
+            "--rm",
+            "-p",
+            f"{port}:7860",
+            image_name,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
+        stdout, stderr = await process.communicate()
 
-        if result.returncode != 0:
-            raise RuntimeError(f"Failed to start container: {result.stderr}")
+        if process.returncode != 0:
+            raise RuntimeError(f"Failed to start container: {stderr.decode().strip()}")
 
-        container_id = result.stdout.strip()
+        container_id = stdout.decode().strip()
         base_url = f"http://localhost:{port}"
 
         env = cls(base_url=base_url)

@@ -1,11 +1,11 @@
 ---
-title: DriftFix: Schema Migration Environment
+title: "DriftFix: Schema Migration Environment"
 emoji: 🗄️
 colorFrom: blue
 colorTo: green
 sdk: docker
 pinned: false
-app_port: 8000
+app_port: 7860
 base_path: /web
 tags:
   - openenv
@@ -138,15 +138,21 @@ DriftFix includes a built-in **Glassmorphism Web Dashboard** accessible at `/web
 
 #### Dashboard Preview
 <p align="center">
-  <img src="Screenshot%202026-04-05%20at%203.48.06%E2%80%AFAM.png" width="800" alt="DriftFix Web Dashboard - Main Interface">
+  <img src="Screenshots/Screenshot%202026-04-05%20at%203.48.06%E2%80%AFAM.png" width="800" alt="DriftFix Web Dashboard - Main Interface">
   <br>
   <em>Figure 1: The DriftFix Dashboard showing real-time schema monitoring and query validation.</em>
 </p>
 
 <p align="center">
-  <img src="Screenshot%202026-04-05%20at%203.55.00%E2%80%AFAM.png" width="800" alt="DriftFix Web Dashboard - Task Completion">
+  <img src="Screenshots/Screenshot%202026-04-05%20at%203.55.00%E2%80%AFAM.png" width="800" alt="DriftFix Web Dashboard - Task Completion">
   <br>
   <em>Figure 2: Real-time progress tracking as the agent successfully migrates the database schema.</em>
+</p>
+
+<p align="center">
+  <img src="Screenshots/Screenshot%202026-04-07%20at%202.03.10%E2%80%AFPM.png" width="800" alt="DriftFix Environment - Final Validation">
+  <br>
+  <em>Figure 3: Final validation showing 100% success across all migration benchmarks.</em>
 </p>
 
 ### ⚡ Persistent Sessions
