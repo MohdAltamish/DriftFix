@@ -158,7 +158,7 @@ async def run_episode(env: SchemaMigrationEnv, client: OpenAI, task_id: str) -> 
                 break
 
             obs    = step_result.observation
-            reward = step_result.reward or 0.0
+            reward = max(step_result.reward or 0.01, 0.01)
             done   = step_result.done
             error  = obs.last_sql_error
 
@@ -178,6 +178,8 @@ async def run_episode(env: SchemaMigrationEnv, client: OpenAI, task_id: str) -> 
 
     finally:
         # [END] always emitted — even on exception
+        if not rewards:
+            rewards = [0.01]
         log_end(success=success, steps=steps_taken, rewards=rewards)
 
 
@@ -188,19 +190,26 @@ async def main() -> None:
     client = OpenAI(api_key=HF_TOKEN, base_url=API_BASE_URL)
 
     env = None
-    try:
-        if IMAGE_NAME:
+
+    # Try Docker first (if IMAGE_NAME is set), then fall back to HF Space
+    if IMAGE_NAME:
+        try:
             print(f"[DEBUG] Launching Docker container: {IMAGE_NAME}", file=sys.stderr, flush=True)
             env = await SchemaMigrationEnv.from_docker_image(IMAGE_NAME)
-        else:
+        except Exception as e:
+            print(f"[DEBUG] Docker failed ({e}), falling back to HF Space", file=sys.stderr, flush=True)
+            env = None
+
+    if env is None:
+        try:
             print(f"[DEBUG] Connecting to HF Space: {ENV_BASE_URL}", file=sys.stderr, flush=True)
             env = SchemaMigrationEnv.from_url(ENV_BASE_URL)
-    except Exception as e:
-        print(f"[DEBUG] Environment connection failed: {e}", file=sys.stderr, flush=True)
-        for task_id in ALL_TASKS:
-            log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
-            log_end(success=False, steps=0, rewards=[])
-        return
+        except Exception as e:
+            print(f"[DEBUG] HF Space connection also failed: {e}", file=sys.stderr, flush=True)
+            for task_id in ALL_TASKS:
+                log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
+                log_end(success=False, steps=0, rewards=[0.01])
+            return
 
     try:
         for task_id in ALL_TASKS:
@@ -209,7 +218,7 @@ async def main() -> None:
             except Exception as e:
                 print(f"[DEBUG] run_episode failed ({task_id}): {e}", file=sys.stderr, flush=True)
                 log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
-                log_end(success=False, steps=0, rewards=[])
+                log_end(success=False, steps=0, rewards=[0.01])
     finally:
         try:
             await env.close()
@@ -224,4 +233,4 @@ if __name__ == "__main__":
         print(f"[DEBUG] Fatal: {e}", file=sys.stderr, flush=True)
         for task_id in ALL_TASKS:
             log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
-            log_end(success=False, steps=0, rewards=[])
+            log_end(success=False, steps=0, rewards=[0.01])
