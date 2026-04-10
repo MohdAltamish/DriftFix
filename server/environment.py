@@ -114,7 +114,7 @@ class SchemaMigrationEnvironment:
             )
             return StepResult(
                 observation=obs,
-                reward=0.01,
+                reward=0.0,
                 done=True,
                 info={"session_id": self.episode_id},
             )
@@ -366,54 +366,15 @@ class SchemaMigrationEnvironment:
         is_destructive: bool,
         is_submit: bool,
     ) -> float:
-        """Compute step reward using the spec formula.
-
-        IMPORTANT: Rewards are clamped to [0.01, 0.99] so that
-        the cumulative task score (sum of rewards clamped to [0,1])
-        is ALWAYS strictly between 0 and 1, as required by the judge.
-        """
         if self.task is None:
-            return 0.01
-
-        total_queries = len(self.task.target_queries)
-        if total_queries == 0:
-            return 0.01
-
-        progress_delta = (
-            queries_passing_now - self._queries_passing_before
-        ) / total_queries
-
-        if progress_delta > 0:
-            step_reward = 0.4 * progress_delta
-        elif progress_delta < 0:
-            step_reward = 0.2 * progress_delta
+            total_queries = 0
         else:
-            step_reward = -0.01
+            total_queries = len(self.task.target_queries)
 
-        if had_sql_error:
-            step_reward -= 0.05
-
-        if self.done and queries_passing_now == total_queries:
-            step_reward += 0.3
-            efficiency_bonus = (
-                max(0, (self.task.max_steps - self.step_count) / self.task.max_steps)
-                * 0.2
-            )
-            step_reward += efficiency_bonus
-
-        if is_destructive:
-            step_reward -= 0.3
-
-        # Clamp to strictly positive range [0.01, 0.99]
-        step_reward = max(min(step_reward, 0.99), 0.01)
-
-        # Also ensure cumulative total stays within (0.01, 0.99)
-        # so that sum(all_rewards) is always strictly between 0 and 1
-        projected_total = self.reward_so_far + step_reward
-        if projected_total >= 0.99:
-            step_reward = max(0.99 - self.reward_so_far, 0.01)
-        elif projected_total <= 0.01:
-            step_reward = max(0.01 - self.reward_so_far, 0.01)
+        if self.done and queries_passing_now == total_queries and total_queries > 0:
+            step_reward = 1.0
+        else:
+            step_reward = 0.0
 
         self.rewards.append(step_reward)
         self.reward_so_far += step_reward
