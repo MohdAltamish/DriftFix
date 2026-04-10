@@ -170,7 +170,7 @@ async def run_episode(env: SchemaMigrationEnv, client: OpenAI, task_id: str) -> 
             if done:
                 break
 
-        score   = max(0.0, min(1.0, sum(rewards)))
+        score   = max(0.001, min(0.999, sum(rewards)))
         success = score >= SUCCESS_SCORE_THRESHOLD
 
     except Exception as e:

@@ -399,8 +399,8 @@ class SchemaMigrationEnvironment:
         if is_destructive:
             step_reward -= 0.3
 
-        # Clamp per-step reward
-        step_reward = max(min(step_reward, 1.0), -1.0)
+        # Clamp per-step reward (avoid exact boundaries)
+        step_reward = max(min(step_reward, 0.99), -0.99)
 
         self.rewards.append(step_reward)
         self.reward_so_far += step_reward
@@ -465,10 +465,10 @@ class SchemaMigrationEnvironment:
             pass
 
     def _get_episode_score(self) -> float:
-        """Compute the episode score normalized to [0.0, 1.0]."""
+        """Compute the episode score strictly within (0, 1)."""
         if not self.rewards:
-            return 0.0
+            return 0.001
         total = sum(self.rewards)
-        # Normalize and clamp
-        score = max(min(total, 1.0), 0.0)
+        # Clamp strictly within (0, 1) — never exactly 0.0 or 1.0
+        score = max(min(total, 0.999), 0.001)
         return score

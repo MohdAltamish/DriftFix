@@ -76,7 +76,7 @@ def _grader_add_missing_column(
     except Exception:
         pass
 
-    return min(score, 1.0)
+    return max(min(score, 0.999), 0.001)
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -131,7 +131,7 @@ def _grader_normalize_table(
     # Bonus for all 3 passing
     if passed_count == 3:
         score += 0.1
-    return min(score, 1.0)
+    return max(min(score, 0.999), 0.001)
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -260,7 +260,7 @@ def _grader_breaking_version_migration(
     if rollback_penalty:
         score -= 0.3
 
-    return max(min(score, 1.0), 0.0)
+    return max(min(score, 0.999), 0.001)
 
 
 # ────────────────────────────────────────────────────────────────────
