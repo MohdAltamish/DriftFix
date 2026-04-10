@@ -1,315 +1,227 @@
 """
-Inference Script — Schema Migration Environment
-===================================
-MANDATORY env vars:
-    API_BASE_URL      The API endpoint for the LLM.
-    MODEL_NAME        The model identifier to use for inference.
-    HF_TOKEN          Your Hugging Face / API key.
-    IMAGE_NAME        The name of the Docker image to use for the environment.
+inference.py — Schema Migration RL Environment
+Root-level inference script for the Meta PyTorch OpenEnv Hackathon.
 
-STDOUT FORMAT:
-    [START] task=<task_name> env=<benchmark> model=<model_name>
-    [STEP]  step=<n> action=<action_str> reward=<0.00> done=<true|false> error=<msg|null>
-    [END]   success=<true|false> steps=<n> score=<score> rewards=<r1,r2,...,rn>
+Log format (auto-parsed by judges — do not modify):
+  [START] task=<task> env=<env> model=<model>
+  [STEP]  step=<n> action=<sql> reward=<f> done=<bool> error=<str|null>
+  [END]   success=<bool> steps=<n> rewards=<csv>
 """
 
-# ── stdlib-only imports (always safe) ────────────────────────────────────────
 import asyncio
 import os
-import subprocess
 import sys
 import textwrap
-import traceback
 from typing import List, Optional
 
-# ── Environment variables (stdlib only, safe at module level) ─────────────────
-IMAGE_NAME   = os.getenv("IMAGE_NAME") or os.getenv("LOCAL_IMAGE_NAME")
-HF_TOKEN     = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
-API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
-MODEL_NAME   = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
-ENV_URL      = os.getenv("ENV_URL") or os.getenv("HF_SPACE_URL") or "http://localhost:7860"
+from openai import OpenAI
+
+from schema_migration_env import SchemaMigrationEnv, SchemaMigrationAction
+
+# ─── Configuration ─────────────────────────────────────────────────────────────
+HF_TOKEN     = os.getenv("HF_TOKEN")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
+MODEL_NAME   = os.getenv("MODEL_NAME",   "Qwen/Qwen2.5-72B-Instruct")
+IMAGE_NAME   = os.getenv("IMAGE_NAME")   # optional — local Docker mode only
+ENV_BASE_URL = os.getenv("ENV_BASE_URL", "https://mohdaltamish-driftfix-env.hf.space")
 
 BENCHMARK               = "schema_migration_env"
 MAX_STEPS               = 15
 SUCCESS_SCORE_THRESHOLD = 0.5
-ALL_TASKS = ["add_missing_column", "normalize_table", "breaking_version_migration"]
+ALL_TASKS               = ["add_missing_column", "normalize_table", "breaking_version_migration"]
 
-# ── Logging helpers (mandatory format — do NOT modify these) ──────────────────
+# ─── Logging helpers (EXACT format required by judges — do not modify) ─────────
+
 def log_start(task: str, env: str, model: str) -> None:
     print(f"[START] task={task} env={env} model={model}", flush=True)
 
+
 def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]) -> None:
     error_val = error if error else "null"
-    print(f"[STEP] step={step} action={action} reward={reward:.2f} done={str(done).lower()} error={error_val}", flush=True)
+    action_clean = action.replace("\n", " ").replace("\r", "").strip()
+    print(
+        f"[STEP] step={step} action={action_clean} reward={reward:.2f} done={str(done).lower()} error={error_val}",
+        flush=True,
+    )
 
-def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
+
+def log_end(success: bool, steps: int, rewards: List[float]) -> None:
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
-    print(f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}", flush=True)
-
-def emit_all_failed() -> None:
-    """Emit mandatory [START]/[END] for all tasks so the validator always sees output."""
-    for task_id in ALL_TASKS:
-        log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
-        log_end(success=False, steps=0, score=0.0, rewards=[])
+    print(f"[END] success={str(success).lower()} steps={steps} rewards={rewards_str}", flush=True)
 
 
-# ── Lazy dependency loader ────────────────────────────────────────────────────
-def _ensure_deps() -> bool:
-    """
-    Try to import third-party deps; pip-install missing ones on the fly.
-    Returns True if all deps are available.
-    """
-    missing = []
-    for pkg, import_name in [("openai", "openai"), ("httpx", "httpx"), ("pydantic", "pydantic")]:
-        try:
-            __import__(import_name)
-        except ImportError:
-            missing.append(pkg)
-
-    # Try to import our own package
-    try:
-        __import__("schema_migration_env")
-    except ImportError:
-        # Try installing from current directory
-        missing.append(".")
-
-    if missing:
-        print(f"[DEBUG] Installing missing packages: {missing}", flush=True)
-        try:
-            subprocess.run(
-                [sys.executable, "-m", "pip", "install", "--quiet"] + missing,
-                check=True,
-                timeout=120,
-            )
-        except Exception as e:
-            print(f"[DEBUG] pip install failed: {e}", flush=True)
-            return False
-
-    return True
-
-
-# ── System prompt ─────────────────────────────────────────────────────────────
+# ─── System prompt ─────────────────────────────────────────────────────────────
 SYSTEM_PROMPT = textwrap.dedent("""\
-    You are a database migration expert. You receive a SQLite database schema with failing SQL queries.
-    Your goal is to issue SQL DDL/DML statements one at a time to fix the schema so all target queries pass.
+    You are a database migration expert working with a SQLite database.
+    Your goal: issue SQL DDL/DML statements one at a time to fix the schema so all target queries pass.
+
     Rules:
-    - CRITICAL: Output exactly ONE single SQL statement per turn. No combined statements.
-    - No explanation, no markdown, no backticks.
-    - Read the schema_dump and query_results carefully before acting.
-    - If a query fails with an error, fix the root cause.
-    - SQLite ALTER TABLE is limited. Do NOT add UNIQUE, PRIMARY KEY, or STORED constraints via ALTER TABLE ADD COLUMN.
-    - For unsupported structural changes: create new table, copy data, drop old, rename new.
-    - Always preserve existing data.
-    - When all queries pass, output: SUBMIT
+    - Output ONLY a single valid SQL statement per turn. No explanation, no markdown, no backticks.
+    - Read schema_dump and query_results carefully before each action.
+    - Fix the root cause of each failing query.
+    - SQLite ALTER TABLE limitations: cannot add PRIMARY KEY, UNIQUE, or STORED columns.
+      For unsupported changes: CREATE new table, INSERT SELECT from old, DROP old, RENAME new.
+    - Always preserve existing row data.
+    - When ALL target queries pass, output exactly: SUBMIT
 """)
 
 
-# ── Prompt builder ────────────────────────────────────────────────────────────
-def build_user_prompt(observation) -> str:
-    qr_lines = []
-    for qr in observation.query_results:
+# ─── Observation → user message ────────────────────────────────────────────────
+def obs_to_prompt(obs) -> str:
+    lines = [
+        f"Task: {obs.task_id} — {obs.task_description}",
+        f"Step: {obs.step_count}",
+    ]
+    if obs.hint:
+        lines.append(f"Hint: {obs.hint}")
+
+    lines.append("\n=== Current Schema ===")
+    lines.append(obs.schema_dump or "(empty)")
+
+    lines.append("\n=== Target Query Status ===")
+    for qr in obs.query_results:
         status = "PASS" if qr.passed else "FAIL"
-        line = f"  {qr.query_id}: {status} — {qr.query}"
+        lines.append(f"[{status}] {qr.query}")
         if qr.error:
-            line += f"\n    Error: {qr.error}"
-        qr_lines.append(line)
-    queries_str = "\n".join(qr_lines)
-    hint_str = f"\nHint: {observation.hint}" if observation.hint else ""
+            lines.append(f"  Error: {qr.error}")
+        if qr.actual_row_count is not None:
+            lines.append(f"  Rows: {qr.actual_row_count}")
 
-    return textwrap.dedent(f"""\
-        Task: {observation.task_id} — {observation.task_description}
-        Step: {observation.step_count}
-        {hint_str}
+    if obs.last_sql_error:
+        lines.append(f"\n=== Last SQL Error ===\n{obs.last_sql_error}")
 
-        Current Schema:
-        {observation.schema_dump}
-
-        Target Query Results:
-        {queries_str}
-
-        Last SQL Error: {observation.last_sql_error or 'None'}
-        Last SQL Output: {observation.last_sql_output or 'None'}
-
-        Issue your next SQL statement (or SUBMIT if all queries pass):
-    """)
+    lines.append("\nOutput your next SQL statement (or SUBMIT if done):")
+    return "\n".join(lines)
 
 
-# ── LLM call ──────────────────────────────────────────────────────────────────
-def get_model_action(client, observation, history: List[str]) -> str:
-    user_prompt = build_user_prompt(observation)
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    for h in history[-6:]:
-        messages.append({"role": "assistant", "content": h})
-    messages.append({"role": "user", "content": user_prompt})
+# ─── LLM call ──────────────────────────────────────────────────────────────────
+def get_action(client: OpenAI, obs, messages: list) -> str:
+    user_msg = obs_to_prompt(obs)
+    messages.append({"role": "user", "content": user_msg})
 
     try:
-        completion = client.chat.completions.create(
+        resp = client.chat.completions.create(
             model=MODEL_NAME,
             messages=messages,
+            max_tokens=256,
             temperature=0.2,
-            max_tokens=500,
-            stream=False,
         )
-        text = (completion.choices[0].message.content or "").strip()
+        raw = (resp.choices[0].message.content or "").strip()
+        messages.append({"role": "assistant", "content": raw})
+    except Exception as e:
+        print(f"[DEBUG] LLM call failed: {e}", file=sys.stderr, flush=True)
+        raw = "SELECT 1;"
+        messages.append({"role": "assistant", "content": raw})
 
-        # Strip markdown backticks if present
-        if text.startswith("```"):
-            lines = [l for l in text.split("\n") if not l.strip().startswith("```")]
-            text = "\n".join(lines).strip()
+    # Strip markdown fences
+    sql = raw
+    for fence in ("```sql", "```SQL", "```"):
+        if sql.startswith(fence):
+            sql = sql[len(fence):].lstrip()
+    if sql.endswith("```"):
+        sql = sql[:-3].rstrip()
+    sql = sql.strip()
 
-        # Enforce single statement
-        if text.strip().upper() != "SUBMIT":
-            statements = [s for s in text.split(";") if s.strip()]
-            if statements:
-                text = statements[0].strip() + ";"
+    # Enforce single statement
+    if sql.upper() != "SUBMIT":
+        parts = [s.strip() for s in sql.split(";") if s.strip()]
+        sql = (parts[0] + ";") if parts else "SELECT 1;"
 
-        return text if text else "SELECT 1;"
-    except Exception as exc:
-        print(f"[DEBUG] Model request failed: {exc}", flush=True)
-        return "SELECT 1;"
+    return sql
 
 
-# ── Episode runner ────────────────────────────────────────────────────────────
-async def run_episode(env, client, task_id: str) -> None:
+# ─── Episode runner ────────────────────────────────────────────────────────────
+async def run_episode(env: SchemaMigrationEnv, client: OpenAI, task_id: str) -> None:
     rewards: List[float] = []
     steps_taken = 0
-    score = 0.0
     success = False
-    history: List[str] = []
 
     log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
 
     try:
-        result = await env.reset(task_id=task_id)
-        observation = result.observation
+        reset_result = await env.reset(task_id=task_id)
+        obs = reset_result.observation
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
-        for step in range(1, MAX_STEPS + 1):
-            if observation.done:
+        for step_num in range(1, MAX_STEPS + 1):
+            if obs.done:
                 break
 
-            sql = get_model_action(client, observation, history)
-            history.append(sql)
-
-            action_type = "submit" if sql.strip().upper() == "SUBMIT" else "execute"
-
-            # Import here to use the already-loaded module
-            from schema_migration_env import SchemaMigrationAction
+            sql = get_action(client, obs, messages)
+            action_type = "submit" if sql.upper() == "SUBMIT" else "execute"
             action = SchemaMigrationAction(sql=sql, action_type=action_type)
 
-            step_result = await env.step(action)
-            observation = step_result.observation
+            try:
+                step_result = await env.step(action)
+            except Exception as e:
+                print(f"[DEBUG] env.step() failed: {e}", file=sys.stderr, flush=True)
+                break
+
+            obs    = step_result.observation
             reward = step_result.reward or 0.0
-            done = step_result.done
-            error = observation.last_sql_error
+            done   = step_result.done
+            error  = obs.last_sql_error
 
             rewards.append(reward)
-            steps_taken = step
+            steps_taken = step_num
 
-            log_step(step=step, action=sql, reward=reward, done=done, error=error)
+            log_step(step=step_num, action=sql, reward=reward, done=done, error=error)
 
             if done:
                 break
 
-        score = max(min(sum(rewards), 1.0), 0.0)
+        score   = max(0.0, min(1.0, sum(rewards)))
         success = score >= SUCCESS_SCORE_THRESHOLD
 
     except Exception as e:
-        print(f"[DEBUG] Episode error for task {task_id}: {e}", flush=True)
-        traceback.print_exc(file=sys.stderr)
+        print(f"[DEBUG] Episode error ({task_id}): {e}", file=sys.stderr, flush=True)
 
     finally:
-        log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
+        # [END] always emitted — even on exception
+        log_end(success=success, steps=steps_taken, rewards=rewards)
 
 
-# ── Health check ──────────────────────────────────────────────────────────────
-async def wait_for_health(client_obj, timeout: int = 60) -> bool:
-    import time
-    start = time.time()
-    while time.time() - start < timeout:
-        try:
-            resp = await client_obj.get("/health")
-            if resp.status_code == 200:
-                print("[DEBUG] Environment is healthy", flush=True)
-                return True
-        except Exception:
-            pass
-        await asyncio.sleep(1)
-    return False
-
-
-# ── Main ──────────────────────────────────────────────────────────────────────
+# ─── Main ──────────────────────────────────────────────────────────────────────
 async def main() -> None:
-    # ── Step 1: ensure dependencies are installed ──────────────────────────
-    if not _ensure_deps():
-        print("[DEBUG] Dependency setup failed — emitting fail results", flush=True)
-        emit_all_failed()
-        return
+    if not HF_TOKEN:
+        raise ValueError("HF_TOKEN environment variable is required")
+    client = OpenAI(api_key=HF_TOKEN, base_url=API_BASE_URL)
 
-    # ── Step 2: import third-party modules (now guaranteed to exist) ───────
-    try:
-        from openai import OpenAI
-        from schema_migration_env import SchemaMigrationEnv
-    except Exception as e:
-        print(f"[DEBUG] Import failed after install attempt: {e}", flush=True)
-        traceback.print_exc(file=sys.stderr)
-        emit_all_failed()
-        return
-
-    # ── Step 3: log startup info ───────────────────────────────────────────
-    print(f"[DEBUG] Python {sys.version}", flush=True)
-    print(f"[DEBUG] API_BASE_URL={API_BASE_URL}", flush=True)
-    print(f"[DEBUG] MODEL_NAME={MODEL_NAME}", flush=True)
-    print(f"[DEBUG] IMAGE_NAME={IMAGE_NAME}", flush=True)
-    print(f"[DEBUG] ENV_URL={ENV_URL}", flush=True)
-    print(f"[DEBUG] HF_TOKEN={'set' if HF_TOKEN else 'NOT SET'}", flush=True)
-
-    # ── Step 4: create OpenAI client ──────────────────────────────────────
-    try:
-        client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN or "dummy-key")
-    except Exception as e:
-        print(f"[DEBUG] OpenAI client init failed: {e}", flush=True)
-        emit_all_failed()
-        return
-
-    # ── Step 5: connect to environment ────────────────────────────────────
     env = None
     try:
         if IMAGE_NAME:
-            print(f"[DEBUG] Starting Docker container: {IMAGE_NAME}", flush=True)
-            env = await SchemaMigrationEnv.from_docker_image(IMAGE_NAME, port=8007)
+            print(f"[DEBUG] Launching Docker container: {IMAGE_NAME}", file=sys.stderr, flush=True)
+            env = await SchemaMigrationEnv.from_docker_image(IMAGE_NAME)
         else:
-            print(f"[DEBUG] Connecting to environment at: {ENV_URL}", flush=True)
-            env = SchemaMigrationEnv.from_url(ENV_URL)
-            healthy = await wait_for_health(env._client, timeout=60)
-            if not healthy:
-                print("[DEBUG] WARNING: health check timed out, proceeding anyway", flush=True)
-
+            print(f"[DEBUG] Connecting to HF Space: {ENV_BASE_URL}", file=sys.stderr, flush=True)
+            env = SchemaMigrationEnv.from_url(ENV_BASE_URL)
     except Exception as e:
-        print(f"[DEBUG] Environment init failed: {e}", flush=True)
-        traceback.print_exc(file=sys.stderr)
-        emit_all_failed()
+        print(f"[DEBUG] Environment connection failed: {e}", file=sys.stderr, flush=True)
+        for task_id in ALL_TASKS:
+            log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
+            log_end(success=False, steps=0, rewards=[])
         return
 
-    # ── Step 6: run all episodes ──────────────────────────────────────────
     try:
         for task_id in ALL_TASKS:
-            await run_episode(env, client, task_id)
-    except Exception as e:
-        print(f"[DEBUG] Unexpected error during episodes: {e}", flush=True)
-        traceback.print_exc(file=sys.stderr)
+            try:
+                await run_episode(env, client, task_id)
+            except Exception as e:
+                print(f"[DEBUG] run_episode failed ({task_id}): {e}", file=sys.stderr, flush=True)
+                log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
+                log_end(success=False, steps=0, rewards=[])
     finally:
         try:
             await env.close()
         except Exception as e:
-            print(f"[DEBUG] env.close() error: {e}", flush=True)
+            print(f"[DEBUG] env.close() error: {e}", file=sys.stderr, flush=True)
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     try:
         asyncio.run(main())
-    except BaseException as e:
-        print(f"[DEBUG] Fatal top-level error: {type(e).__name__}: {e}", flush=True)
-        traceback.print_exc(file=sys.stderr)
-        emit_all_failed()
-        sys.exit(0)  # exit 0 so validator doesn't see non-zero status
+    except Exception as e:
+        print(f"[DEBUG] Fatal: {e}", file=sys.stderr, flush=True)
+        for task_id in ALL_TASKS:
+            log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
+            log_end(success=False, steps=0, rewards=[])

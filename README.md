@@ -5,7 +5,7 @@ colorFrom: blue
 colorTo: green
 sdk: docker
 pinned: false
-app_port: 7860
+app_port: 8000
 base_path: /web
 tags:
   - openenv
@@ -78,6 +78,19 @@ export IMAGE_NAME="driftfix-env"
 python3 inference.py
 ```
 
+### Judge Simulation (No Docker)
+
+To simulate the exact judge environment without Docker:
+
+```bash
+unset IMAGE_NAME
+export HF_TOKEN="your_hf_token"
+export API_BASE_URL="https://router.huggingface.co/v1"
+export MODEL_NAME="Qwen/Qwen2.5-72B-Instruct"
+
+python3 inference.py
+```
+
 ### Basic Usage
 
 ```python
@@ -87,11 +100,11 @@ from schema_migration_env import SchemaMigrationEnv, SchemaMigrationAction
 async def main():
     # Start environment via Docker
     env = await SchemaMigrationEnv.from_docker_image("driftfix-env")
-    
+
     # Reset to a specific task
     result = await env.reset(task_id="add_missing_column")
     print(f"Task: {result.observation.task_description}")
-    
+
     # Take an action
     action = SchemaMigrationAction(
         sql="ALTER TABLE employees ADD COLUMN salary INTEGER DEFAULT 60000;",
@@ -99,10 +112,36 @@ async def main():
     )
     step = await env.step(action)
     print(f"Reward: {step.reward} | Done: {step.done}")
-    
+
     await env.close()
 
 asyncio.run(main())
+```
+
+---
+
+## 📊 Inference Output Format
+
+The inference script emits **exactly three line types** to stdout:
+
+```
+[START] task=<task_name> env=<benchmark> model=<model_name>
+[STEP]  step=<n> action=<action_str> reward=<0.00> done=<true|false> error=<msg|null>
+[END]   success=<true|false> steps=<n> rewards=<r1,r2,...,rn>
+```
+
+**Rules:**
+- `reward` and `rewards` formatted to 2 decimal places
+- `done` and `success` are lowercase booleans: `true` or `false`
+- `error` is the raw error string, or `null` if none
+- All `[DEBUG]` output goes to stderr (not stdout)
+- `[END]` is always emitted, even on exception
+
+**Example output:**
+```
+[START] task=add_missing_column env=schema_migration_env model=Qwen/Qwen2.5-72B-Instruct
+[STEP] step=1 action=ALTER TABLE employees ADD COLUMN salary REAL; reward=0.88 done=true error=null
+[END] success=true steps=1 rewards=0.88
 ```
 
 ---
@@ -136,25 +175,6 @@ DriftFix includes a built-in **Glassmorphism Web Dashboard** accessible at `/web
 - Live Query Pass/Fail status
 - Agent Progress & Cumulative Rewards
 
-#### Dashboard Preview
-<p align="center">
-  <img src="Screenshots/Screenshot%202026-04-05%20at%203.48.06%E2%80%AFAM.png" width="800" alt="DriftFix Web Dashboard - Main Interface">
-  <br>
-  <em>Figure 1: The DriftFix Dashboard showing real-time schema monitoring and query validation.</em>
-</p>
-
-<p align="center">
-  <img src="Screenshots/Screenshot%202026-04-05%20at%203.55.00%E2%80%AFAM.png" width="800" alt="DriftFix Web Dashboard - Task Completion">
-  <br>
-  <em>Figure 2: Real-time progress tracking as the agent successfully migrates the database schema.</em>
-</p>
-
-<p align="center">
-  <img src="Screenshots/Screenshot%202026-04-07%20at%202.03.10%E2%80%AFPM.png" width="800" alt="DriftFix Environment - Final Validation">
-  <br>
-  <em>Figure 3: Final validation showing 100% success across all migration benchmarks.</em>
-</p>
-
 ### ⚡ Persistent Sessions
 Leverage **WebSockets (`/ws`)** for high-frequency agent interaction, reducing HTTP overhead and enabling real-time observability.
 
@@ -182,10 +202,11 @@ $$R = \text{Progress Bonus} + \text{Completion Bonus} + \text{Efficiency Bonus} 
 
 | Variable | Default | Description |
 | :--- | :--- | :--- |
-| `HF_TOKEN` | Required | Hugging Face API token for inference |
-| `MODEL_NAME` | `Qwen/Qwen2.5-72B-Instruct` | LLM used by `inference.py` |
-| `IMAGE_NAME` | Required | Docker image name for `inference.py` |
+| `HF_TOKEN` | **Required** (no default) | Hugging Face API token for inference |
 | `API_BASE_URL` | `https://router.huggingface.co/v1` | LLM Gateway URL |
+| `MODEL_NAME` | `Qwen/Qwen2.5-72B-Instruct` | LLM used by `inference.py` |
+| `IMAGE_NAME` | *(optional)* | Docker image name (local mode only) |
+| `ENV_BASE_URL` | `https://mohdaltamish-driftfix-env.hf.space` | HF Space URL when IMAGE_NAME is not set |
 
 ---
 
