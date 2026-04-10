@@ -30,6 +30,9 @@ MAX_STEPS               = 15
 SUCCESS_SCORE_THRESHOLD = 0.5
 ALL_TASKS               = ["add_missing_column", "normalize_table", "breaking_version_migration"]
 
+# Epsilon used to clamp rewards strictly into (0, 1) as required by Phase 2 validator
+_EPS = 1e-9
+
 # ─── Logging helpers (EXACT format required by judges — do not modify) ─────────
 
 def log_start(task: str, env: str, model: str) -> None:
@@ -158,10 +161,12 @@ async def run_episode(env: SchemaMigrationEnv, client: OpenAI, task_id: str) -> 
                 break
 
             obs    = step_result.observation
-            reward = max(step_result.reward or 0.01, 0.01)
+            reward = float(step_result.reward) if step_result.reward else 0.0
             done   = step_result.done
             error  = obs.last_sql_error
 
+            # FIX 1: clamp individual reward strictly into (0, 1)
+            reward = max(_EPS, min(1.0 - _EPS, reward))
             rewards.append(reward)
             steps_taken = step_num
 
@@ -170,16 +175,18 @@ async def run_episode(env: SchemaMigrationEnv, client: OpenAI, task_id: str) -> 
             if done:
                 break
 
-        score   = max(0.001, min(0.999, sum(rewards)))
+        # FIX 2: sum rewards, then clamp strictly into (0, 1)
+        score   = sum(rewards)
+        score   = max(_EPS, min(1.0 - _EPS, score))
         success = score >= SUCCESS_SCORE_THRESHOLD
 
     except Exception as e:
         print(f"[DEBUG] Episode error ({task_id}): {e}", file=sys.stderr, flush=True)
 
     finally:
-        # [END] always emitted — even on exception
+        # FIX 3: avoid exact 0.0 in the fallback rewards list
         if not rewards:
-            rewards = [0.01]
+            rewards = [_EPS]
         log_end(success=success, steps=steps_taken, rewards=rewards)
 
 
@@ -208,7 +215,7 @@ async def main() -> None:
             print(f"[DEBUG] HF Space connection also failed: {e}", file=sys.stderr, flush=True)
             for task_id in ALL_TASKS:
                 log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
-                log_end(success=False, steps=0, rewards=[0.01])
+                log_end(success=False, steps=0, rewards=[_EPS])
             return
 
     try:
@@ -218,7 +225,7 @@ async def main() -> None:
             except Exception as e:
                 print(f"[DEBUG] run_episode failed ({task_id}): {e}", file=sys.stderr, flush=True)
                 log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
-                log_end(success=False, steps=0, rewards=[0.01])
+                log_end(success=False, steps=0, rewards=[_EPS])
     finally:
         try:
             await env.close()
@@ -233,4 +240,4 @@ if __name__ == "__main__":
         print(f"[DEBUG] Fatal: {e}", file=sys.stderr, flush=True)
         for task_id in ALL_TASKS:
             log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
-            log_end(success=False, steps=0, rewards=[0.01])
+            log_end(success=False, steps=0, rewards=[_EPS])
