@@ -52,6 +52,8 @@ _TASK1_QUERIES = [
 def _grader_add_missing_column(
     results: List[QueryResult], conn: sqlite3.Connection
 ) -> float:
+    if results is None:
+        return _clamp(0.0)
     score = 0.0
     for r in results:
         if r.query_id == "q1" and r.passed:
@@ -103,6 +105,8 @@ _TASK2_QUERIES = [
 def _grader_normalize_table(
     results: List[QueryResult], conn: sqlite3.Connection
 ) -> float:
+    if results is None:
+        return _clamp(0.0)
     score = 0.0
     passed_count = 0
     for r in results:
@@ -179,6 +183,8 @@ _TASK3_QUERIES = [
 def _grader_breaking_version_migration(
     results: List[QueryResult], conn: sqlite3.Connection
 ) -> float:
+    if results is None:
+        return _clamp(0.0)
     weights = {"q1": 0.15, "q2": 0.20, "q3": 0.25, "q4": 0.25, "q5": 0.15}
     score = 0.0
 

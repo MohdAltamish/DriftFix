@@ -374,11 +374,8 @@ class SchemaMigrationEnvironment:
             self.rewards.append(0.0)
             return 0.0
 
-        total_queries = len(self.task.target_queries)
-        if total_queries == 0:
-            score = 0.0
-        else:
-            score = float(queries_passing_now) / total_queries
+        query_results = self._evaluate_queries()
+        score = self.task.grader(query_results, self.conn)
 
         self.rewards.append(score)
         self.reward_so_far += score

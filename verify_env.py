@@ -3,7 +3,7 @@ from schema_migration_env import SchemaMigrationEnv, SchemaMigrationAction
 
 async def test():
     # 1. Reset the environment (starts a local task on port 7860)
-    env = SchemaMigrationEnv(base_url="http://localhost:7860")
+    env = SchemaMigrationEnv(base_url="http://localhost:8000")
     result = await env.reset(task_id="add_missing_column")
     
     # Calculate passing queries from the list of results

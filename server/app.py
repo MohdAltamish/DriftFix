@@ -129,7 +129,30 @@ async def favicon():
 @app.get("/health")
 async def health():
     """Health check."""
-    return {"status": "ok"}
+    return {"status": "healthy"}
+
+
+@app.get("/metadata")
+async def metadata():
+    """Return environment metadata for OpenEnv validator."""
+    return {
+        "name": "schema-migration-env",
+        "description": "RL environment for training agents to perform database schema migrations. Agent executes SQL DDL/DML statements step-by-step to fix broken schemas until target queries pass.",
+        "version": "0.1.0",
+        "author": "mohdaltamish",
+        "tags": ["openenv", "database", "schema-migration", "sql", "real-world"],
+    }
+
+
+@app.get("/schema")
+async def schema():
+    """Return action/observation/state JSON schemas for OpenEnv validator."""
+    from server.models import SchemaMigrationAction, SchemaMigrationObservation, SchemaMigrationState
+    return {
+        "action": SchemaMigrationAction.model_json_schema(),
+        "observation": SchemaMigrationObservation.model_json_schema(),
+        "state": SchemaMigrationState.model_json_schema(),
+    }
 
 
 @app.post("/reset")
@@ -435,7 +458,7 @@ async def websocket_endpoint(websocket: WebSocket):
 def main():
     """Main entry point for running the server."""
     import uvicorn
-    uvicorn.run("server.app:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("server.app:app", host="0.0.0.0", port=8000)
 
 
 if __name__ == "__main__":

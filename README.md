@@ -5,7 +5,7 @@ colorFrom: blue
 colorTo: green
 sdk: docker
 pinned: false
-app_port: 7860
+app_port: 8000
 base_path: /web
 tags:
   - openenv

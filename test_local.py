@@ -18,7 +18,7 @@ from typing import List, Optional
 from schema_migration_env import SchemaMigrationEnv, SchemaMigrationAction
 
 # ── Constants ────────────────────────────────────────────────────────────────
-ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:7860")
+ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:8000")
 MODEL_NAME   = "local-oracle"          # Fake model name for local testing
 BENCHMARK    = "schema_migration_env"
 SUCCESS_SCORE_THRESHOLD = 0.5

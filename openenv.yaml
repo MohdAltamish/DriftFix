@@ -9,15 +9,18 @@ tags:
   - sql
   - real-world
 sdk: docker
-app_port: 7860
+app_port: 8000
 base_path: /web
 tasks:
   - id: add_missing_column
     difficulty: easy
     description: "Add a missing column to fix failing SELECT queries"
+    grader: server.graders:EasyGrader
   - id: normalize_table
     difficulty: medium
     description: "Normalize a denormalized table into proper relational schema"
+    grader: server.graders:MediumGrader
   - id: breaking_version_migration
     difficulty: hard
     description: "Migrate legacy schema to new version without data loss"
+    grader: server.graders:HardGrader
