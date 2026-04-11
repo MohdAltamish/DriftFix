@@ -145,6 +145,7 @@ def get_action(obs, messages: list) -> str:
 async def run_episode(env: SchemaMigrationEnv, task_id: str) -> None:
     rewards: List[float] = []
     steps_taken = 0
+    score = 0.0
     success = False
 
     log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
@@ -179,9 +180,9 @@ async def run_episode(env: SchemaMigrationEnv, task_id: str) -> None:
             log_step(step=step_num, action=sql, reward=reward, done=done, error=error)
 
             if done:
+                score = step_result.info.get("score", sum(rewards))
                 break
 
-        score   = sum(rewards)
         success = score >= SUCCESS_SCORE_THRESHOLD
 
     except Exception as e:
