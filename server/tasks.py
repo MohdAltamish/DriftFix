@@ -1,37 +1,37 @@
 """Task definitions and graders for the Schema Migration Environment.
 
-Each task defines:
-  - seed_sql: SQL to initialize the broken database
-  - target_queries: queries that must all pass for success
-  - grader: function(query_results, db_conn) -> float in [0.0, 1.0]
-  - description, hint, max_steps
+Each grader returns a float strictly in (0.001, 0.999) via _clamp().
+Exact 0.0 or 1.0 are rejected by the Phase 2 validator.
 """
 
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional
 
 from server.models import QueryResult
 
 
+def _clamp(score: float) -> float:
+    """Return score strictly in (0.001, 0.999) — validator rejects exact 0.0 or 1.0."""
+    return max(0.001, min(0.999, float(score)))
+
+
 @dataclass
 class TaskDefinition:
-    """A single task the agent must solve."""
-
     task_id: str
     difficulty: str
     description: str
     seed_sql: List[str]
-    target_queries: List[dict]  # list of {query_id, query, expected_row_count?}
+    target_queries: List[dict]
     grader: Callable[[List[QueryResult], sqlite3.Connection], float]
     hint: Optional[str] = None
     max_steps: int = 10
 
 
 # ────────────────────────────────────────────────────────────────────
-# TASK 1: add_missing_column (EASY)
+# TASK 1 — add_missing_column (EASY)
 # ────────────────────────────────────────────────────────────────────
 
 _TASK1_SEED = [
@@ -44,14 +44,8 @@ _TASK1_SEED = [
 ]
 
 _TASK1_QUERIES = [
-    {
-        "query_id": "q1",
-        "query": "SELECT id, name, salary FROM employees WHERE salary > 50000;",
-    },
-    {
-        "query_id": "q2",
-        "query": "SELECT department, AVG(salary) FROM employees GROUP BY department;",
-    },
+    {"query_id": "q1", "query": "SELECT id, name, salary FROM employees WHERE salary > 50000;"},
+    {"query_id": "q2", "query": "SELECT department, AVG(salary) FROM employees GROUP BY department;"},
 ]
 
 
@@ -59,15 +53,12 @@ def _grader_add_missing_column(
     results: List[QueryResult], conn: sqlite3.Connection
 ) -> float:
     score = 0.0
-
-    # Q1 passes = 0.4
     for r in results:
         if r.query_id == "q1" and r.passed:
             score += 0.4
         elif r.query_id == "q2" and r.passed:
             score += 0.4
-
-    # Check salary values are varied (not all the same) = 0.2
+    # Bonus: salary values are varied
     try:
         cursor = conn.execute("SELECT salary FROM employees WHERE salary IS NOT NULL")
         salaries = [row[0] for row in cursor.fetchall()]
@@ -75,12 +66,11 @@ def _grader_add_missing_column(
             score += 0.2
     except Exception:
         pass
-
-    return 1.0 if score >= 0.99 else 0.0
+    return _clamp(score)
 
 
 # ────────────────────────────────────────────────────────────────────
-# TASK 2: normalize_table (MEDIUM)
+# TASK 2 — normalize_table (MEDIUM)
 # ────────────────────────────────────────────────────────────────────
 
 _TASK2_SEED = [
@@ -104,18 +94,9 @@ _TASK2_SEED = [
 ]
 
 _TASK2_QUERIES = [
-    {
-        "query_id": "q1",
-        "query": "SELECT c.name, COUNT(o.id) as order_count FROM customers c JOIN orders o ON c.id = o.customer_id GROUP BY c.id;",
-    },
-    {
-        "query_id": "q2",
-        "query": "SELECT p.name, SUM(o.quantity) FROM products p JOIN orders o ON p.id = o.product_id GROUP BY p.id;",
-    },
-    {
-        "query_id": "q3",
-        "query": "SELECT c.email FROM customers c WHERE c.id = 1;",
-    },
+    {"query_id": "q1", "query": "SELECT c.name, COUNT(o.id) as order_count FROM customers c JOIN orders o ON c.id = o.customer_id GROUP BY c.id;"},
+    {"query_id": "q2", "query": "SELECT p.name, SUM(o.quantity) FROM products p JOIN orders o ON p.id = o.product_id GROUP BY p.id;"},
+    {"query_id": "q3", "query": "SELECT c.email FROM customers c WHERE c.id = 1;"},
 ]
 
 
@@ -128,14 +109,13 @@ def _grader_normalize_table(
         if r.passed:
             score += 0.3
             passed_count += 1
-    # Bonus for all 3 passing
     if passed_count == 3:
         score += 0.1
-    return 1.0 if score >= 0.99 else 0.0
+    return _clamp(score)
 
 
 # ────────────────────────────────────────────────────────────────────
-# TASK 3: breaking_version_migration (HARD)
+# TASK 3 — breaking_version_migration (HARD)
 # ────────────────────────────────────────────────────────────────────
 
 _TASK3_SEED = [
@@ -155,7 +135,6 @@ _TASK3_SEED = [
         txn_type TEXT,
         FOREIGN KEY(user_uid) REFERENCES user_accounts(uid)
     );""",
-    # 10 users
     "INSERT INTO user_accounts VALUES (1, 'Alice Johnson', 'alice@example.com', '555-0001', 1500.00, '2023-01-15');",
     "INSERT INTO user_accounts VALUES (2, 'Bob Smith', 'bob@example.com', '555-0002', 2300.50, '2023-02-20');",
     "INSERT INTO user_accounts VALUES (3, 'Carol White', 'carol@example.com', '555-0003', 890.75, '2023-03-10');",
@@ -166,52 +145,34 @@ _TASK3_SEED = [
     "INSERT INTO user_accounts VALUES (8, 'Hank Moore', 'hank@example.com', '555-0008', 920.30, '2023-08-30');",
     "INSERT INTO user_accounts VALUES (9, 'Ivy Clark', 'ivy@example.com', '555-0009', 1800.00, '2023-09-14');",
     "INSERT INTO user_accounts VALUES (10, 'Jack Taylor', 'jack@example.com', '555-0010', 3400.60, '2023-10-01');",
-    # 20 transactions
-    "INSERT INTO transactions VALUES (1, 1, 100.00, '2023-06-01', 'credit');",
-    "INSERT INTO transactions VALUES (2, 1, -50.00, '2023-06-02', 'debit');",
-    "INSERT INTO transactions VALUES (3, 2, 200.00, '2023-06-03', 'credit');",
-    "INSERT INTO transactions VALUES (4, 2, -75.50, '2023-06-04', 'debit');",
-    "INSERT INTO transactions VALUES (5, 3, 300.00, '2023-06-05', 'credit');",
-    "INSERT INTO transactions VALUES (6, 3, -120.00, '2023-06-06', 'debit');",
-    "INSERT INTO transactions VALUES (7, 4, 450.00, '2023-06-07', 'credit');",
-    "INSERT INTO transactions VALUES (8, 4, -200.00, '2023-06-08', 'debit');",
-    "INSERT INTO transactions VALUES (9, 5, 150.00, '2023-06-09', 'credit');",
-    "INSERT INTO transactions VALUES (10, 5, -80.00, '2023-06-10', 'debit');",
-    "INSERT INTO transactions VALUES (11, 6, 500.00, '2023-06-11', 'credit');",
+    "INSERT INTO transactions VALUES (1,  1,  100.00, '2023-06-01', 'credit');",
+    "INSERT INTO transactions VALUES (2,  1,  -50.00, '2023-06-02', 'debit');",
+    "INSERT INTO transactions VALUES (3,  2,  200.00, '2023-06-03', 'credit');",
+    "INSERT INTO transactions VALUES (4,  2,  -75.50, '2023-06-04', 'debit');",
+    "INSERT INTO transactions VALUES (5,  3,  300.00, '2023-06-05', 'credit');",
+    "INSERT INTO transactions VALUES (6,  3, -120.00, '2023-06-06', 'debit');",
+    "INSERT INTO transactions VALUES (7,  4,  450.00, '2023-06-07', 'credit');",
+    "INSERT INTO transactions VALUES (8,  4, -200.00, '2023-06-08', 'debit');",
+    "INSERT INTO transactions VALUES (9,  5,  150.00, '2023-06-09', 'credit');",
+    "INSERT INTO transactions VALUES (10, 5,  -80.00, '2023-06-10', 'debit');",
+    "INSERT INTO transactions VALUES (11, 6,  500.00, '2023-06-11', 'credit');",
     "INSERT INTO transactions VALUES (12, 7, -250.00, '2023-06-12', 'debit');",
-    "INSERT INTO transactions VALUES (13, 7, 600.00, '2023-06-13', 'credit');",
+    "INSERT INTO transactions VALUES (13, 7,  600.00, '2023-06-13', 'credit');",
     "INSERT INTO transactions VALUES (14, 8, -100.00, '2023-06-14', 'debit');",
-    "INSERT INTO transactions VALUES (15, 8, 350.00, '2023-06-15', 'credit');",
+    "INSERT INTO transactions VALUES (15, 8,  350.00, '2023-06-15', 'credit');",
     "INSERT INTO transactions VALUES (16, 9, -175.00, '2023-06-16', 'debit');",
-    "INSERT INTO transactions VALUES (17, 9, 400.00, '2023-06-17', 'credit');",
-    "INSERT INTO transactions VALUES (18, 10, -300.00, '2023-06-18', 'debit');",
+    "INSERT INTO transactions VALUES (17, 9,  400.00, '2023-06-17', 'credit');",
+    "INSERT INTO transactions VALUES (18, 10,-300.00, '2023-06-18', 'debit');",
     "INSERT INTO transactions VALUES (19, 10, 225.00, '2023-06-19', 'credit');",
-    "INSERT INTO transactions VALUES (20, 1, 175.00, '2023-06-20', 'credit');",
+    "INSERT INTO transactions VALUES (20, 1,  175.00, '2023-06-20', 'credit');",
 ]
 
 _TASK3_QUERIES = [
-    {
-        "query_id": "q1",
-        "query": "SELECT id, name, email FROM users LIMIT 1;",
-    },
-    {
-        "query_id": "q2",
-        "query": "SELECT u.name, SUM(t.amount) FROM users u JOIN transactions t ON u.id = t.user_id GROUP BY u.id;",
-    },
-    {
-        "query_id": "q3",
-        "query": "SELECT COUNT(*) FROM users;",
-        "expected_row_count": 1,  # single row with count
-    },
-    {
-        "query_id": "q4",
-        "query": "SELECT COUNT(*) FROM transactions;",
-        "expected_row_count": 1,
-    },
-    {
-        "query_id": "q5",
-        "query": "SELECT id, amount, created_at FROM transactions LIMIT 1;",
-    },
+    {"query_id": "q1", "query": "SELECT id, name, email FROM users LIMIT 1;"},
+    {"query_id": "q2", "query": "SELECT u.name, SUM(t.amount) FROM users u JOIN transactions t ON u.id = t.user_id GROUP BY u.id;"},
+    {"query_id": "q3", "query": "SELECT COUNT(*) FROM users;",        "expected_row_count": 1},
+    {"query_id": "q4", "query": "SELECT COUNT(*) FROM transactions;", "expected_row_count": 1},
+    {"query_id": "q5", "query": "SELECT id, amount, created_at FROM transactions LIMIT 1;"},
 ]
 
 
@@ -225,42 +186,34 @@ def _grader_breaking_version_migration(
         if r.passed:
             score += weights.get(r.query_id, 0.0)
 
-    # Data preservation checks for q3 and q4
+    # Data preservation checks
     for r in results:
         if r.query_id == "q3" and r.passed:
             try:
-                cursor = conn.execute("SELECT COUNT(*) FROM users")
-                count = cursor.fetchone()[0]
+                count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
                 if count != 10:
-                    score -= weights["q3"]  # Not preserved
+                    score -= weights["q3"]
             except Exception:
                 pass
         elif r.query_id == "q4" and r.passed:
             try:
-                cursor = conn.execute("SELECT COUNT(*) FROM transactions")
-                count = cursor.fetchone()[0]
+                count = conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0]
                 if count != 20:
                     score -= weights["q4"]
             except Exception:
                 pass
 
-    # Rollback penalty: if any table that previously had rows now has 0
-    rollback_penalty = False
-    for table_name in ["users", "user_accounts", "transactions"]:
+    # Rollback penalty — any critical table emptied
+    for table in ["users", "user_accounts", "transactions"]:
         try:
-            cursor = conn.execute(f"SELECT COUNT(*) FROM {table_name}")
-            count = cursor.fetchone()[0]
+            count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
             if count == 0:
-                rollback_penalty = True
+                score -= 0.3
                 break
         except Exception:
-            # Table doesn't exist is ok if it was intentionally renamed
             continue
 
-    if rollback_penalty:
-        score -= 0.3
-
-    return 1.0 if score >= 0.99 else 0.0
+    return _clamp(score)
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -302,14 +255,10 @@ TASKS: Dict[str, TaskDefinition] = {
 
 
 def get_task(task_id: str) -> TaskDefinition:
-    """Get a task by ID. Raises KeyError if not found."""
     if task_id not in TASKS:
-        raise KeyError(
-            f"Unknown task '{task_id}'. Available: {list(TASKS.keys())}"
-        )
+        raise KeyError(f"Unknown task '{task_id}'. Available: {list(TASKS.keys())}")
     return TASKS[task_id]
 
 
 def list_task_ids() -> List[str]:
-    """Return all available task IDs."""
     return list(TASKS.keys())
